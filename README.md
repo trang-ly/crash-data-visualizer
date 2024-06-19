@@ -14,7 +14,7 @@ This project visualizes the most recent 10,000 car crashes in 2024 in Virginia u
 
 - **`2024_va_crash_data_marker.py`**: Main script to fetch data, process it, and generate the map.
 - **`2024_va_crash_data.csv`**: CSV file containing the processed crash data.
-- **`2024_va_crash_data_map.html`**: HTML file with the interactive map.
+- **`2024_va_crash_data_map.html`**: HTML file with the interactive map. View it [here](https://trang-ly.github.io/crash-data-visualizer/2024_va_crash_data_map.html).
 - **`screenshots/`**: Directory containing example screenshots of the map.
 
 ## Notes
