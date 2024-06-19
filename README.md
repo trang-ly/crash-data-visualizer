@@ -3,9 +3,9 @@ This project visualizes the most recent 10,000 car crashes in 2024 in Virginia u
 
 ## Features
 
-- **Data Fetching**: Fetches car crash data in chunks using pagination from a GeoJSON service specific to Virginia.
+- **Data Fetching**: Fetches car crash data in chunks using pagination from a GeoJSON service.
 - **Data Processing**: Extracts attributes and coordinates from the data, converts crash dates from Unix timestamp to human-readable format, and sorts data by crash date.
-- **Data Selection**: Selects the most recent 10,000 crashes for visualization to ensure optimal performance.
+- **Data Selection**: Selects the most recent 10,000 crashes for visualization.
 - **Data Saving**: Saves the processed data to a CSV file.
 - **Map Visualization**: Plots the crashes on a Folium map with different colors representing different collision types and displays popups with basic crash information.
 - **HTML Output**: Saves the map as an HTML file for easy sharing and viewing.
@@ -38,6 +38,13 @@ This project visualizes the most recent 10,000 car crashes in 2024 in Virginia u
    python 2024_va_crash_data_marker.py
 
 ## Example Screenshots
+
 Here are some example screenshots of the generated map:
 
+**Zoomed-in Map with Popup HTML**:
+![Screenshot 1](screenshots/detail_view_map.png)
+- **Description**: Shows a close-up view of Virginia with individual crash markers. Each marker displays a popup with detailed crash information, including date, time, severity, and collision type.
 
+**Zoomed-out Map of Virginia**:
+![Screenshot 2](screenshots/overview_map_virginia.png)
+- **Description**: Provides an overview of Virginia with all crash markers visible. This view offers a broad perspective of the distribution and density of crashes across the state in 2024.
