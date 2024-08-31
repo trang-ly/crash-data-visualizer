@@ -1,113 +1,172 @@
-import requests
-from datetime import datetime
+import os
+from dotenv import load_dotenv
+import asyncio
+import aiohttp
 import pandas as pd
+import psycopg2
 import folium
 
-all_features = []
+# Load environment variables from .env
+load_dotenv()
 
-# Initial URL of the GeoJSON data with a query for 2024 crashes (Max Record Count: 2000)
-url = ("https://services.arcgis.com/p5v98VHDX9Atv3l7/arcgis/rest/services/CrashData_test/FeatureServer/0/query?"
-       "outFields=*&where=CRASH_DT%20%3E=%20%272024-01-01%27%20AND%20CRASH_DT%20%3C=%20%272024-12-31%27&f=geojson")
+DB_HOST = os.getenv("DB_HOST")
+DB_NAME = os.getenv("DB_NAME")
+DB_USER = os.getenv("DB_USER")
+DB_PASSWORD = os.getenv("DB_PASSWORD")
 
-offset = 0
-while True:
-    # Construct URL with offset
-    page_url = f"{url}&resultOffset={offset}"
+# Initial URL of the GeoJSON data with a query for 2024 crashes
+base_url = "https://services.arcgis.com/p5v98VHDX9Atv3l7/arcgis/rest/services/CrashData_test/FeatureServer/0/query?outFields=*&where=CRASH_DT%20%3E=%20%272024-01-01%27%20AND%20CRASH_DT%20%3C=%20%272024-12-31%27&f=geojson"
 
-    response = requests.get(page_url)
-    data = response.json()
 
-    # Extract features from current page
-    features = data["features"]
-    all_features.extend(features)
+# Asynchronous function to fetch data from a single page
+async def fetch_page(session, url):
+    try:
+        async with session.get(url) as response:
+            return await response.json()
+    except aiohttp.ClientError as e:
+        print(f"HTTP request failed: {e}")
+        return None
 
-    offset += 2000
-    if len(features) < 2000:
-        break
 
-# Extract attributes and coordinates
-rows = []
-for feature in all_features:
-    attributes = feature["properties"]
-    coordinates = feature["geometry"]["coordinates"]
-    attributes["longitude"] = coordinates[0]
-    attributes["latitude"] = coordinates[1]
+# Asynchronous function to fetch all data with pagination
+async def fetch_all_pages(url):
+    offset = 0
+    all_features = []
+    async with aiohttp.ClientSession() as session:
+        while True:
+            # Construct URL with pagination
+            page_url = f"{url}&resultOffset={offset}"
+            # Fetch data from the current page
+            data = await fetch_page(session, page_url)
+            features = data.get("features", [])
+            # Add features to the list
+            all_features.extend(features)
 
-    # Convert CRASH_DT from Unix timestamp to MM/DD/YYYY format
-    crash_date = attributes.get("CRASH_DT", "")
-    if crash_date:
-        # Convert milliseconds to seconds for the datetime conversion
-        crash_date = datetime.utcfromtimestamp(crash_date / 1000).strftime("%m/%d/%Y")
-        attributes["CRASH_DT"] = crash_date
+            if len(features) < 2000:
+                break
+            # Increment offset for the next page
+            offset += 2000
+    return all_features
 
-    rows.append(attributes)
 
-df = pd.DataFrame(rows)
+# Main function to run the asynchronous fetch and process data
+async def main():
+    all_features = await fetch_all_pages(base_url)
 
-# Sort by crash date and select the most recent 10,000 crashes
-df["CRASH_DT"] = pd.to_datetime(df["CRASH_DT"], format="%m/%d/%Y")
-df = df.sort_values(by="CRASH_DT", ascending=False).head(10000)
+    # Process data, convert to pandas DataFrame
+    rows = []
+    for feature in all_features:
+        attributes = feature["properties"]
+        geometry = feature.get("geometry")
 
-output_csv = "2024_va_crash_data.csv"
-df.to_csv(output_csv, index=False)
-print(f"CSV file saved: {output_csv}")
+        if geometry is not None:
+            coordinates = geometry.get("coordinates")
+            if coordinates:
+                attributes["longitude"] = coordinates[0]
+                attributes["latitude"] = coordinates[1]
+            else:
+                attributes["longitude"] = None
+                attributes["latitude"] = None
+        else:
+            attributes["longitude"] = None
+            attributes["latitude"] = None
 
-# Create a base map centered on average latitude and longitude
-base_map = folium.Map(location=[df["latitude"].mean(), df["longitude"].mean()], zoom_start=12)
+        rows.append(attributes)
 
-# Create a base map centered on Virginia with a zoom level to show the entire state
-# virginia_coords = [37.4316, -78.6569]
-# base_map = folium.Map(location=virginia_coords, zoom_start=7)
+    df = pd.DataFrame(rows)
 
-total_crashes = 0
+    # Convert Unix timestamps to readable dates
+    df["CRASH_DT"] = pd.to_datetime(df["CRASH_DT"], unit="ms")
 
-# Get unique collision types from the dataset
-unique_collision_types = df["COLLISION_TYPE"].unique()
-# Define a color map for collision types
-collision_type_colors = {}
-colors = ["blue", "orange", "skyblue", "yellow", "limegreen", "red", "hotpink", "black"]
-# Assign colors to unique collision types
-for i, collision_type in enumerate(unique_collision_types):
-    collision_type_colors[collision_type] = colors[i % len(colors)]  # Wrap around colors if more types than colors
+    conn = psycopg2.connect(
+        host=DB_HOST,
+        dbname=DB_NAME,
+        user=DB_USER,
+        password=DB_PASSWORD
+    )
+    cursor = conn.cursor()
 
-# Add markers with popups to the map and count total crashes
-for index, row in df.iterrows():
-    # Access collision type and other attributes
-    object_id = row["OBJECTID"] if "OBJECTID" in row else "N/A"
-    document_nbr = row["DOCUMENT_NBR"] if "DOCUMENT_NBR" in row else "N/A"
-    crash_military_tm = row["CRASH_MILITARY_TM"] if "CRASH_MILITARY_TM" in row else "N/A"
-    crash_severity = row["CRASH_SEVERITY"] if "CRASH_SEVERITY" in row else "N/A"
-    collision_type = row["COLLISION_TYPE"] if "COLLISION_TYPE" in row else "Other"
+    cursor.execute("DROP TABLE crash_data")
 
-    # Determine marker color based on collision type
-    color = collision_type_colors.get(collision_type, "black")
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS crash_data (
+            id SERIAL PRIMARY KEY,
+            crash_id VARCHAR,
+            crash_date DATE,
+            severity VARCHAR,
+            collision_type VARCHAR,
+            longitude FLOAT,
+            latitude FLOAT
+        )
+        """)
+    conn.commit()
 
-    # Construct popup HTML
-    popup_text = f"""
-        <b>Object ID:</b> {object_id}<br>
-        <b>Document NBR:</b> {document_nbr}<br>
-        <b>Crash Date:</b> {row.get("CRASH_DT", "N/A")}<br>
-        <b>Crash Military Time:</b> {crash_military_tm}<br>
-        <b>Crash Severity:</b> {crash_severity}<br>
-        <b>Collision Type:</b> {collision_type}<br>
-        """
+    # Insert data
+    for _, row in df.iterrows():
+        cursor.execute("""
+            INSERT INTO crash_data (crash_id, crash_date, severity, collision_type, longitude, latitude)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            """, (row.get("DOCUMENT_NBR"), row.get("CRASH_DT"), row.get("CRASH_SEVERITY"),
+                  row.get("COLLISION_TYPE"), row.get("longitude"), row.get("latitude")))
+    conn.commit()
 
-    # Add marker to the map
-    folium.CircleMarker(
-        location=[row["latitude"], row["longitude"]],
-        radius=6,
-        color=color,
-        fill=True,
-        fill_color=color,
-        fill_opacity=0.7,
-        popup=folium.Popup(popup_text, max_width=300)
-    ).add_to(base_map)
+    print("Data stored in PostgreSQL database.")
 
-    total_crashes += 1
+    # Query the most recent 10,000 crashes
+    df_recent = pd.read_sql_query("""
+            SELECT * FROM crash_data
+            ORDER BY crash_date DESC
+            LIMIT 10000
+        """, conn)
 
-# Save the map to an HTML file
-output_map = "2024_va_crash_data_map.html"
-base_map.save(output_map)
-print(f"Map saved: {output_map}")
+    # Create a map with crash markers
+    base_map = folium.Map(location=[df_recent["latitude"].mean(), df_recent["longitude"].mean()], zoom_start=12)
 
-print(f"Total crashes: {total_crashes}")
+    unique_collision_types = df["COLLISION_TYPE"].unique()
+
+    # Define a color palette with 16 distinct colors
+    unique_colors = [
+        "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2",
+        "#D55E00", "#CC79A7", "#999999", "#F0E442", "#E69F00",
+        "#56B4E9", "#009E73", "#0072B2", "#D55E00", "#CC79A7",
+        "#999999"
+    ]
+
+    # Ensure there are at least 16 colors
+    assert len(unique_colors) >= 16, "Need at least 16 colors for 16 collision types."
+
+    # Assign a unique color to each collision type
+    collision_type_colors = {collision_type: unique_colors[i % len(unique_colors)]
+                             for i, collision_type in enumerate(unique_collision_types)}
+
+    # Populate markers with data
+    for _, row in df_recent.iterrows():
+        if pd.notnull(row["latitude"]) and pd.notnull(row["longitude"]):
+            color = collision_type_colors.get(row["collision_type"], "black")
+            popup_text = f"""
+                <b>Crash ID:</b> {row.get("crash_id", "N/A")}<br>
+                <b>Crash Date:</b> {row.get("crash_date", "N/A")}<br>
+                <b>Severity:</b> {row.get("severity", "N/A")}<br>
+                <b>Collision Type:</b> {row.get("collision_type", "N/A")}<br>
+                """
+            folium.CircleMarker(
+                location=[row["latitude"], row["longitude"]],
+                radius=6,
+                color=color,
+                fill=True,
+                fill_color=color,
+                fill_opacity=0.7,
+                popup=folium.Popup(popup_text, max_width=300)
+            ).add_to(base_map)
+
+    # Save the map to an HTML file
+    output_map = "2024_crash_data_map.html"
+    base_map.save(output_map)
+    print(f"Map saved: {output_map}")
+
+    cursor.close()
+    conn.close()
+
+if __name__ == "__main__":
+    # Python environment
+    asyncio.run(main())
