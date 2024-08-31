@@ -30,7 +30,7 @@ This project visualizes the most recent 10,000 car crashes in 2024 in Virginia u
 ## File Description
 
 - **`2024_va_crash_data_marker.py`**: Main script to fetch data asynchronously, process it, and generate the map.
-- **`2024_va_crash_data_map.html`**: HTML file with the interactive map. View it [here](https://trang-ly.github.io/crash-data-visualizer/2024_va_crash_data_map.html).
+- **`2024_va_crash_data_map.html`**: HTML file with the interactive map. View it [here](https://trang-ly.github.io/crash-data-visualizer/2024_crash_data_map.html).
 - **`screenshots/`**: Directory containing example screenshots of the map.
 
 ## Notes
@@ -50,16 +50,16 @@ This project visualizes the most recent 10,000 car crashes in 2024 in Virginia u
    ```
 
 3. **Set up Environment Variables:**
-   ```sh
-   Create a .env file in the project directory with the following content:
-      
+
+   Create a .env file in the project directory with the following content:  
+   ```sh 
       DB_HOST=your_database_host
       DB_NAME=your_database_name
       DB_USER=your_database_user
       DB_PASSWORD=your_database_password
    ```
 
-4. **Run the Script:**
+5. **Run the Script:**
    ```sh
    python 2024_va_crash_data_marker.py
    ```
